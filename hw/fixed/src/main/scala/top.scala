@@ -41,6 +41,6 @@ object Top {
     val n = 3
     val r = 3
     val theArgs = Array("--backend", "v", "--genHarness")
-    chiselMain(theArgs, () => Module(new NN1Top(totalWidth, fracWidth, m, n, r)))
+    chiselMain(theArgs, () => Module(new NN1ShiftTop(totalWidth, fracWidth, m, n, r)))
   }
 }

@@ -118,16 +118,57 @@ object NN1 {
 		val fracWidth = b(0).getFractionalWidth()
 
 		val x_bar = XNet(x, y, z, ain, cin)
-		val y_bar = YNet(x_bar, y, b, ain)
-		val z_bar = ZNet(x_bar, z, cin)
+		
+        // Pipeline Stage after x_bar
+        val x_bar_p1 = Reg(next=x_bar)
+        val x_p1 = Reg(next=x)
+        val y_p1 = Reg(next=y)
+        val z_p1 = Reg(next=z)
+        val a_p1 = Reg(next=ain)
+        val c_p1 = Reg(next=cin)
+        val b_p1 = Reg(next=b)
 
-		val x_diff = (x_bar, x).zipped.map(_-_).map(ele => ele*%lbda)
-		val y_diff = (y_bar, y).zipped.map(_-_).map(ele => ele*%lbda*%Fixed(2, bitWidth, fracWidth))
-		val z_diff = (MatrixVectorMult(cin, x_bar), z_bar).zipped.map(_-_).map(ele => ele*%lbda*%Fixed(2, bitWidth, fracWidth))
+        val y_bar = YNet(x_bar_p1, y_p1, b_p1, a_p1)
 
-		val update_x = (x, x_diff).zipped.map(_+_)
-		val update_y = (y, y_diff).zipped.map(_+_)
-		val update_z = (z, z_diff).zipped.map(_+_)
+        // Pipeline Stage after y_bar
+        val x_bar_p2 = Reg(next=x_bar_p1)
+        val y_bar_p2 = Reg(next=y_bar)
+        val x_p2 = Reg(next=x_p1)
+        val y_p2 = Reg(next=y_p1)
+        val z_p2 = Reg(next=z_p1)
+        val a_p2 = Reg(next=a_p1)
+        val c_p2 = Reg(next=c_p1)
+        val b_p2 = Reg(next=b_p1)
+
+		val z_bar = ZNet(x_bar_p2, z_p2, c_p2)
+        
+        // Pipeline Stage after z_bar
+        val x_bar_p3 = Reg(next=x_bar_p2)
+        val y_bar_p3 = Reg(next=y_bar_p2)
+        val z_bar_p3 = Reg(next=z_bar)
+        val x_p3 = Reg(next=x_p2)
+        val y_p3 = Reg(next=y_p2)
+        val z_p3 = Reg(next=z_p2)
+        val a_p3 = Reg(next=a_p2)
+        val c_p3 = Reg(next=c_p2)
+        val b_p3 = Reg(next=b_p2)
+
+		val x_diff = (x_bar_p3, x_p3).zipped.map(_-_).map(ele => ele*%lbda)
+		val y_diff = (y_bar_p3, y_p3).zipped.map(_-_).map(ele => ele*%lbda*%Fixed(2, bitWidth, fracWidth))
+		val z_diff = (MatrixVectorMult(c_p3, x_bar_p3), z_bar_p3).zipped.map(_-_).map(ele => ele*%lbda*%Fixed(2, bitWidth, fracWidth))
+        
+        
+        // Pipeline Stage after z_bar
+        val x_diff_p4 = Reg(next=Vec(x_diff))
+        val y_diff_p4 = Reg(next=Vec(y_diff))
+        val z_diff_p4 = Reg(next=Vec(z_diff))
+        val x_p4 = Reg(next=x_p3)
+        val y_p4 = Reg(next=y_p3)
+        val z_p4 = Reg(next=z_p3)
+
+		val update_x = (x_p4, x_diff_p4).zipped.map(_+_)
+		val update_y = (y_p4, y_diff_p4).zipped.map(_+_)
+		val update_z = (z_p4, z_diff_p4).zipped.map(_+_)
 
 		(Vec(update_x), Vec(update_y), Vec(update_z))
 	}
@@ -151,4 +192,88 @@ class NN1Top(totalWidth : Int, fracWidth : Int, m : Int, n : Int, r : Int) exten
   io.xout := xout
   io.yout := yout
   io.zout := zout
+}
+
+class NN1ShiftTop(totalWidth : Int, fracWidth : Int, m : Int, n : Int, r : Int) extends Module {
+    val io = new Bundle {
+        val x = Fixed(INPUT, totalWidth, fracWidth)
+        val y = Fixed(INPUT, totalWidth, fracWidth)
+        val z = Fixed(INPUT, totalWidth, fracWidth)
+        val b = Fixed(INPUT, totalWidth, fracWidth)
+        val a = Fixed(INPUT, totalWidth, fracWidth)
+        val c = Fixed(INPUT, totalWidth, fracWidth)
+        val lbda = Fixed(INPUT, totalWidth, fracWidth)
+        val xout = Fixed(OUTPUT, totalWidth, fracWidth)
+        val yout = Fixed(OUTPUT, totalWidth, fracWidth)
+        val zout = Fixed(OUTPUT, totalWidth, fracWidth)
+    }
+    val nnTop = Module(new NN1Top(totalWidth, fracWidth, m, n, r))
+
+    nnTop.io.lbda := io.lbda
+    
+    // B Input
+    val bShift = Vec.fill(m){Reg(init=Fixed(0, totalWidth, fracWidth))}
+    for (i <- 0 until m-1) {
+        bShift(i) := bShift(i+1)
+        nnTop.io.b(i) := bShift(i)
+    }
+    bShift(m-1) := io.b
+    nnTop.io.b(m-1) := io.b
+
+    // X Input
+    val xShift = Vec.fill(n){Reg(init=Fixed(0, totalWidth, fracWidth))}
+    for (i <- 0 until n-1) {
+        xShift(i) := xShift(i+1)
+        nnTop.io.x(i) := xShift(i)
+    }
+    xShift(n-1) := io.x
+    nnTop.io.x(n-1) := io.x
+
+    // Y Input
+    val yShift = Vec.fill(m){Reg(init=Fixed(0, totalWidth, fracWidth))}
+    for (i <- 0 until m-1) {
+        yShift(i) := yShift(i+1)
+        nnTop.io.y(i) := yShift(i)
+    }
+    yShift(m-1) := io.y
+    nnTop.io.y(m-1) := io.y
+
+    // Z Input
+    val zShift = Vec.fill(r){Reg(init=Fixed(0, totalWidth, fracWidth))}
+    for (i <- 0 until r-1) {
+        zShift(i) := zShift(i+1)
+        nnTop.io.z(i) := zShift(i)
+    }
+    zShift(r-1) := io.z
+    nnTop.io.z(r-1) := io.z
+
+    // A Input
+    val aShift = Vec.fill(m){Vec.fill(n){Reg(init=Fixed(0, totalWidth, fracWidth))}}
+    for (i <- 0 until m-1) {
+        aShift(i) := aShift(i+1)
+        nnTop.io.a(i) := aShift(i)
+    }
+    for (i <- 0 until n) {
+        aShift(m-1)(i) := io.a
+        nnTop.io.a(m-1)(i) := io.a
+    }
+
+    // C Input
+    val cShift = Vec.fill(n){Vec.fill(r){Reg(init=Fixed(0, totalWidth, fracWidth))}}
+    for (i <- 0 until n-1) {
+        cShift(i) := cShift(i+1)
+        nnTop.io.c(i) := cShift(i)
+    }
+    for (i <- 0 until r) {
+        cShift(n-1)(i) := io.c
+        nnTop.io.c(n-1)(i) := io.c
+    }
+    
+    val nnxout = Reg(next=nnTop.io.xout.reduce(_+_))
+    val nnyout = Reg(next=nnTop.io.yout.reduce(_+_))
+    val nnzout = Reg(next=nnTop.io.zout.reduce(_+_))
+
+    io.xout := nnxout
+    io.yout := nnyout
+    io.zout := nnzout
 }
