@@ -93,23 +93,54 @@ class XNetModule(totalWidth : Int, fracWidth : Int, m : Int, n : Int, r : Int) e
 
 object YNet {
 	def apply(x : Vec[Fixed], y : Vec[Fixed], b : Vec[Fixed], a : Vec[Vec[Fixed]]) : Vec[Fixed] = {
-		val ax = MatrixVectorMult(a, x)
-		val axb = (ax, b).zipped.map(_-_)
-		val y_stage = (axb, y).zipped.map(_+_)
-		val gPos = Fixed(2, y(0).getWidth(), y(0).getFractionalWidth())
-		val gNeg = Fixed(-2, y(0).getWidth(), y(0).getFractionalWidth())
-		Vec(y_stage.map(yEle => g(yEle, gPos, gNeg)))
+    val yNet = Module(new YNetModule(y(0).getWidth(), y(0).getFractionalWidth(), y.length, x.length))
+    yNet.io.x := x
+    yNet.io.y := y
+    yNet.io.b := b
+    yNet.io.a := a
+    yNet.io.o
 	}
+}
+
+class YNetModule(totalWidth : Int, fracWidth : Int, m : Int, n : Int) extends Module {
+  val io = new Bundle {
+    val x = Vec.fill(n){Fixed(INPUT, totalWidth, fracWidth)}
+    val y = Vec.fill(m){Fixed(INPUT, totalWidth, fracWidth)}
+    val b = Vec.fill(m){Fixed(INPUT, totalWidth, fracWidth)}
+    val a = Vec.fill(m){Vec.fill(n){Fixed(INPUT, totalWidth, fracWidth)}}
+    val o = Vec.fill(m){Fixed(OUTPUT, totalWidth, fracWidth)}
+  }
+  val ax = MatrixVectorMult(io.a, io.x)
+  val axb = (ax, io.b).zipped.map(_-_)
+  val y_stage = (axb, io.y).zipped.map(_+_)
+  val gPos = Fixed(2, io.y(0).getWidth(), io.y(0).getFractionalWidth())
+  val gNeg = Fixed(-2, io.y(0).getWidth(), io.y(0).getFractionalWidth())
+  val y_bar = Vec(y_stage.map(yEle => g(yEle, gPos, gNeg)))
+  (io.o, y_bar).zipped.map((out, ele) => out := ele)
 }
 
 object ZNet {
 	def apply(x : Vec[Fixed], z : Vec[Fixed], c : Vec[Vec[Fixed]]) : Vec[Fixed] = {
-		val cx = MatrixVectorMult(c, x)
-		val z_stage = (cx, z).zipped.map(_-_)
-		val gPos = Fixed(2, z(0).getWidth(), z(0).getFractionalWidth())
-		val gNeg = Fixed(-2, z(0).getWidth(), z(0).getFractionalWidth())
-		Vec(z_stage.map(zEle => g(zEle, gPos, gNeg)))
+    val zNet = Module(new ZNetModule(z(0).getWidth(), z(0).getFractionalWidth(), x.length, z.length))
+    zNet.io.x := x
+    zNet.io.z := z
+    zNet.io.c := c
+    zNet.io.o
 	}
+}
+
+class ZNetModule(totalWidth : Int, fracWidth : Int, n : Int, r : Int) extends Module {
+  val io = new Bundle {
+    val x = Vec.fill(n){Fixed(INPUT, totalWidth, fracWidth)}
+    val z = Vec.fill(r){Fixed(INPUT, totalWidth, fracWidth)}
+    val c = Vec.fill(n){Vec.fill(r){Fixed(INPUT, totalWidth, fracWidth)}}
+    val o = Vec.fill(r){Fixed(OUTPUT, totalWidth, fracWidth)}
+  }
+  val cx = MatrixVectorMult(io.c, io.x)
+  val z_stage = (cx, io.z).zipped.map(_-_)
+  val gPos = Fixed(2, io.z(0).getWidth(), io.z(0).getFractionalWidth())
+  val gNeg = Fixed(-2, io.z(0).getWidth(), io.z(0).getFractionalWidth())
+  val z_bar = Vec(z_stage.map(zEle => g(zEle, gPos, gNeg)))
 }
 
 object NN1 {
