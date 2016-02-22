@@ -36,7 +36,7 @@ all: emulator verilog # dreamer
 
 clean:
 	-rm -f *.h *.hex *.flo *.cpp *.o *.out *.tab *.v *.vcd $(executables)
-	-rm -rf project/target/ target/ test-outputs/
+	-rm -rf project/target/ project/project/ target/ test-outputs/
 
 cleanall: clean
 	-rm -rf $(staging_dir)/*

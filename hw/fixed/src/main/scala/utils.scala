@@ -7,6 +7,27 @@ object g {
 		(in > hi) -> hi,
 		(in < lo) -> lo
 		))
+
+    def apply(in : Fixed, hi : Fixed, lo : Fixed) : Fixed = {
+        val gMod = Module(new gModule(in.getWidth(), in.getFractionalWidth()))
+        gMod.io.in := in
+        gMod.io.hi := hi
+        gMod.io.lo := lo
+        gMod.io.ou
+    }
+}
+
+class gModule(totalWidth : Int, fracWidth : Int) extends Module {
+    val io = new Bundle {
+        val in = Fixed(INPUT, totalWidth, fracWidth)
+        val hi = Fixed(INPUT, totalWidth, fracWidth)
+        val lo = Fixed(INPUT, totalWidth, fracWidth)
+        val ou = Fixed(OUTPUT, totalWidth, fracWidth)
+    }
+    io.ou := MuxCase(io.in, Array(
+        (io.in > io.hi) -> io.hi,
+        (io.in < io.lo) -> io.lo
+        ))
 }
 
 object reduceTree {

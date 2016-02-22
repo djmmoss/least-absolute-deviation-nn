@@ -35,8 +35,11 @@ import Chisel._
 object MatrixVectorMult {
 	def apply(a : Vec[Vec[Fixed]], b : Vec[Fixed]) : Vec[Fixed] = {
 		checkDIM(a.length, a(0).length, b.length)
-		Vec(a.map(aCol => DotProduct(aCol, b)))
-	}
+        val matrixVectorMultMod = Module(new MatrixVectorMultModule(b(0).getWidth(), b(0).getFractionalWidth(), a.length, b.length))
+	    matrixVectorMultMod.io.a := a
+	    matrixVectorMultMod.io.b := b
+	    matrixVectorMultMod.io.o
+    }
 
 	def checkDIM(arow : Int, acol : Int, bdim : Int) = {
 		if (acol != bdim) {
@@ -45,15 +48,36 @@ object MatrixVectorMult {
 	}
 }
 
+class MatrixVectorMultModule(totalWidth : Int, fracWidth : Int, m : Int, n : Int) extends Module {
+    val io = new Bundle {
+        val a = Vec.fill(m){Vec.fill(n){Fixed(INPUT, totalWidth, fracWidth)}}
+        val b = Vec.fill(n){Fixed(INPUT, totalWidth, fracWidth)}
+        val o = Vec.fill(m){Fixed(OUTPUT, totalWidth, fracWidth)}
+    }
+    io.o := Reg(next=Vec(io.a.map(aCol => DotProduct(aCol, io.b))))
+}
+
 object MatrixTranspose {
 	def apply(a : Vec[Vec[Fixed]]) : Vec[Vec[Fixed]] = Vec(for(i <- 0 until a(0).length) yield Vec(for(j <- 0 until a.length) yield a(j)(i)))
 }
 
 object DotProduct {
 	def apply(a : Vec[Fixed], b : Vec[Fixed]): Fixed = {
-		val op : (Fixed, Fixed) => Fixed = _+_
-		reduceTree((a, b).zipped.map((aEle, bEle) => aEle*%bEle).toList, op)
-	}
+	val dotProd = Module(new DotProductModule(a(0).getWidth(), a(0).getFractionalWidth(), a.length))
+    dotProd.io.a := a
+    dotProd.io.b := b
+    dotProd.io.o
+    }
+}
+
+class DotProductModule(totalWidth : Int, fracWidth : Int, len : Int) extends Module {
+    val io = new Bundle {
+        val a = Vec.fill(len){Fixed(INPUT, totalWidth, fracWidth)}
+        val b = Vec.fill(len){Fixed(INPUT, totalWidth, fracWidth)}
+        val o = Fixed(OUTPUT, totalWidth, fracWidth)
+    }
+    val op : (Fixed, Fixed) => Fixed = _+_
+    io.o := reduceTree((io.a, io.b).zipped.map((aEle, bEle) => Reg(next=aEle*%bEle)).toList, op)
 }
 
 object XNet {
@@ -82,9 +106,10 @@ class XNetModule(totalWidth : Int, fracWidth : Int, m : Int, n : Int, r : Int) e
     val o = Vec.fill(n){Fixed(OUTPUT, totalWidth, fracWidth)}
   }
   val ay = MatrixVectorMult(MatrixTranspose(io.a), io.y)
-  val cz = MatrixVectorMult(MatrixTranspose(io.c), io.z)
-  val xay = (io.x, ay).zipped.map(_-_)
-  val x_stage = (xay, cz).zipped.map(_+_)
+  val cz = Reg(next=MatrixVectorMult(MatrixTranspose(io.c), io.z))
+  val x_delay = ShiftRegister(io.x, 2)
+  val xay = Reg(next=Vec((x_delay, ay).zipped.map(_-_)))
+  val x_stage = Reg(next=Vec((xay, cz).zipped.map(_+_)))
   val gPos = Fixed(2, io.x(0).getWidth(), io.x(0).getFractionalWidth())
   val gNeg = Fixed(-2, io.x(0).getWidth(), io.x(0).getFractionalWidth())
   val x_bar = Vec(x_stage.map(xEle => g(xEle, gPos, gNeg)))
@@ -111,8 +136,10 @@ class YNetModule(totalWidth : Int, fracWidth : Int, m : Int, n : Int) extends Mo
     val o = Vec.fill(m){Fixed(OUTPUT, totalWidth, fracWidth)}
   }
   val ax = MatrixVectorMult(io.a, io.x)
-  val axb = (ax, io.b).zipped.map(_-_)
-  val y_stage = (axb, io.y).zipped.map(_+_)
+  val b_next = ShiftRegister(io.b, 2)
+  val y_next = ShiftRegister(io.y, 3)
+  val axb = Reg(next=Vec((ax, b_next).zipped.map(_-_)))
+  val y_stage = Reg(next=Vec((axb, y_next).zipped.map(_+_)))
   val gPos = Fixed(2, io.y(0).getWidth(), io.y(0).getFractionalWidth())
   val gNeg = Fixed(-2, io.y(0).getWidth(), io.y(0).getFractionalWidth())
   val y_bar = Vec(y_stage.map(yEle => g(yEle, gPos, gNeg)))
@@ -137,10 +164,12 @@ class ZNetModule(totalWidth : Int, fracWidth : Int, n : Int, r : Int) extends Mo
     val o = Vec.fill(r){Fixed(OUTPUT, totalWidth, fracWidth)}
   }
   val cx = MatrixVectorMult(io.c, io.x)
-  val z_stage = (cx, io.z).zipped.map(_-_)
+  val z_next = ShiftRegister(io.z, 2)
+  val z_stage = Reg(next=Vec((cx, z_next).zipped.map(_-_)))
   val gPos = Fixed(2, io.z(0).getWidth(), io.z(0).getFractionalWidth())
   val gNeg = Fixed(-2, io.z(0).getWidth(), io.z(0).getFractionalWidth())
   val z_bar = Vec(z_stage.map(zEle => g(zEle, gPos, gNeg)))
+  (io.o, z_bar).zipped.map((out, ele) => out := ele)
 }
 
 object NN1 {
@@ -152,37 +181,37 @@ object NN1 {
 		
         // Pipeline Stage after x_bar
         val x_bar_p1 = Reg(next=x_bar)
-        val x_p1 = Reg(next=x)
-        val y_p1 = Reg(next=y)
-        val z_p1 = Reg(next=z)
-        val a_p1 = Reg(next=ain)
-        val c_p1 = Reg(next=cin)
-        val b_p1 = Reg(next=b)
+        val x_p1 = ShiftRegister(x, 5)
+        val y_p1 = ShiftRegister(y, 5)
+        val z_p1 = ShiftRegister(z, 5)
+        val a_p1 = ShiftRegister(ain, 5)
+        val c_p1 = ShiftRegister(cin, 5)
+        val b_p1 = ShiftRegister(b, 5)
 
         val y_bar = YNet(x_bar_p1, y_p1, b_p1, a_p1)
 
         // Pipeline Stage after y_bar
-        val x_bar_p2 = Reg(next=x_bar_p1)
         val y_bar_p2 = Reg(next=y_bar)
-        val x_p2 = Reg(next=x_p1)
-        val y_p2 = Reg(next=y_p1)
-        val z_p2 = Reg(next=z_p1)
-        val a_p2 = Reg(next=a_p1)
-        val c_p2 = Reg(next=c_p1)
-        val b_p2 = Reg(next=b_p1)
+        val x_bar_p2 = ShiftRegister(x_bar_p1,4)
+        val x_p2 = ShiftRegister(x_p1,4)
+        val y_p2 = ShiftRegister(y_p1,4)
+        val z_p2 = ShiftRegister(z_p1,4)
+        val a_p2 = ShiftRegister(a_p1,4)
+        val c_p2 = ShiftRegister(c_p1,4)
+        val b_p2 = ShiftRegister(b_p1,4)
 
 		val z_bar = ZNet(x_bar_p2, z_p2, c_p2)
         
         // Pipeline Stage after z_bar
-        val x_bar_p3 = Reg(next=x_bar_p2)
-        val y_bar_p3 = Reg(next=y_bar_p2)
         val z_bar_p3 = Reg(next=z_bar)
-        val x_p3 = Reg(next=x_p2)
-        val y_p3 = Reg(next=y_p2)
-        val z_p3 = Reg(next=z_p2)
-        val a_p3 = Reg(next=a_p2)
-        val c_p3 = Reg(next=c_p2)
-        val b_p3 = Reg(next=b_p2)
+        val x_bar_p3 = ShiftRegister(x_bar_p2,4)
+        val y_bar_p3 = ShiftRegister(y_bar_p2,4)
+        val x_p3 = ShiftRegister(x_p2,4)
+        val y_p3 = ShiftRegister(y_p2,4)
+        val z_p3 = ShiftRegister(z_p2,4)
+        val a_p3 = ShiftRegister(a_p2,4)
+        val c_p3 = ShiftRegister(c_p2,4)
+        val b_p3 = ShiftRegister(b_p2,4)
 
 		val x_diff = (x_bar_p3, x_p3).zipped.map(_-_).map(ele => ele*%lbda)
 		val y_diff = (y_bar_p3, y_p3).zipped.map(_-_).map(ele => ele*%lbda*%Fixed(2, bitWidth, fracWidth))
@@ -190,16 +219,16 @@ object NN1 {
         
         
         // Pipeline Stage after z_bar
-        val x_diff_p4 = Reg(next=Vec(x_diff))
-        val y_diff_p4 = Reg(next=Vec(y_diff))
         val z_diff_p4 = Reg(next=Vec(z_diff))
-        val x_p4 = Reg(next=x_p3)
-        val y_p4 = Reg(next=y_p3)
-        val z_p4 = Reg(next=z_p3)
+        val x_diff_p4 = ShiftRegister(Vec(x_diff), 3)
+        val y_diff_p4 = ShiftRegister(Vec(y_diff), 3)
+        val x_p4 = ShiftRegister(x_p3, 3)
+        val y_p4 = ShiftRegister(y_p3, 3)
+        val z_p4 = ShiftRegister(z_p3, 3)
 
-		val update_x = (x_p4, x_diff_p4).zipped.map(_+_)
-		val update_y = (y_p4, y_diff_p4).zipped.map(_+_)
-		val update_z = (z_p4, z_diff_p4).zipped.map(_+_)
+		val update_x = Reg(next=Vec((x_p4, x_diff_p4).zipped.map(_+_)))
+		val update_y = Reg(next=Vec((y_p4, y_diff_p4).zipped.map(_+_)))
+		val update_z = Reg(next=Vec((z_p4, z_diff_p4).zipped.map(_+_)))
 
 		(Vec(update_x), Vec(update_y), Vec(update_z))
 	}

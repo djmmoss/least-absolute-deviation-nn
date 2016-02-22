@@ -4,7 +4,7 @@ set DEVICE [lindex $argv 1]
 set XDC_FILE [lindex $argv 2]
 
 # Reading Verilog file
-read_verilog [glob *.v]
+read_verilog [glob ./src/*.v]
 
 # Adding Constraints
 read_xdc ${XDC_FILE}
@@ -16,7 +16,7 @@ synth_design -top ${DESIGN} -part ${DEVICE}
 write_checkpoint -force ./${DESIGN}_post_synth.dcp
 
 # Running Logic Optimization
-opt_design
+opt_design -directive Explore
 
 # Saving Run
 write_checkpoint -force ./${DESIGN}_opt.dcp
